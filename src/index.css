@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: #08090c;
+    color: #f3f4f6;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: 'Orbitron', 'Chakra Petch', sans-serif;
+    letter-spacing: 0.05em;
+  }
+
+  .font-mono-race {
+    font-family: 'Chakra Petch', 'Rajdhani', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .font-racing {
+    font-family: 'Rajdhani', sans-serif;
+  }
+}
+
+/* Custom motorsport glass & carbon fiber background textures */
+.bg-carbon {
+  background-color: #0c0d12;
+  background-image: 
+    linear-gradient(45deg, rgba(255, 255, 255, 0.03) 25%, transparent 25%), 
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.03) 25%, transparent 25%), 
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.03) 75%), 
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.03) 75%);
+  background-size: 8px 8px;
+}
+
+.glass-panel {
+  background: rgba(12, 15, 23, 0.78);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+}
+
+.glass-panel-glow {
+  background: rgba(15, 20, 32, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 45, 85, 0.25);
+  box-shadow: 0 0 25px rgba(255, 45, 85, 0.15), 0 8px 32px 0 rgba(0, 0, 0, 0.6);
+}
+
+.racing-slant {
+  clip-path: polygon(12px 0%, 100% 0%, calc(100% - 12px) 100%, 0% 100%);
+}
+
+.racing-slant-left {
+  clip-path: polygon(16px 0%, 100% 0%, 100% 100%, 0% 100%);
+}
+
+.racing-slant-right {
+  clip-path: polygon(0% 0%, calc(100% - 16px) 0%, 100% 100%, 0% 100%);
+}
+
+/* Pulse & glow animations */
+@keyframes neon-pulse {
+  0%, 100% { opacity: 0.85; filter: drop-shadow(0 0 8px currentColor); }
+  50% { opacity: 1; filter: drop-shadow(0 0 16px currentColor); }
+}
+
+.animate-neon-pulse {
+  animation: neon-pulse 2s infinite ease-in-out;
+}
+
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(1000%); }
+}
+
+.scanline-effect {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.4), transparent);
+  animation: scanline 8s linear infinite;
+  pointer-events: none;
+}
+

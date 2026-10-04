@@ -1,0 +1,6 @@
+{
+  "name": "GRID//15 - Multiplayer Open-Wheel Racing",
+  "description": "High-octane browser-based multiplayer open-wheel racing game for up to 15 players featuring real-time physics, custom liveries, interactive power-ups, and three dynamic circuits.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
