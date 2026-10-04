@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Player, TrackData, PowerUpBox, PowerUpType, PlayerInput } from '../types/game';
 import { Minimap } from './Minimap';
 import { POWER_UPS } from '../config/powerups';
 import { formatTimeMs } from '../utils/storage';
-import { Zap, Shield, Gauge, Radio, Wind, RotateCcw, Volume2, VolumeX } from 'lucide-react';
+import { Zap, Shield, Gauge, Radio, Wind, RotateCcw, Volume2, VolumeX, Menu, LogOut, X, WifiOff, AlertTriangle } from 'lucide-react';
 import { soundEngine } from '../game/audio';
 
 interface RaceHUDProps {
@@ -15,10 +15,13 @@ interface RaceHUDProps {
   countdown: number | null;
   onUsePowerUp: () => void;
   onRequestRespawn: () => void;
+  onQuitRace: () => void;
   touchInput: PlayerInput;
   setTouchInput: React.Dispatch<React.SetStateAction<PlayerInput>>;
   isMuted: boolean;
   onToggleMute: () => void;
+  isConnected?: boolean;
+  quitToasts?: { id: string; name: string }[];
 }
 
 export const RaceHUD: React.FC<RaceHUDProps> = ({
@@ -30,16 +33,43 @@ export const RaceHUD: React.FC<RaceHUDProps> = ({
   countdown,
   onUsePowerUp,
   onRequestRespawn,
+  onQuitRace,
   touchInput,
   setTouchInput,
   isMuted,
   onToggleMute,
+  isConnected = true,
+  quitToasts = [],
 }) => {
+  const [showMenu, setShowMenu] = useState(false);
+  const [showQuitConfirm, setShowQuitConfirm] = useState(false);
+  const [showControlsModal, setShowControlsModal] = useState(false);
+
   const state = localPlayer.state;
   const speedKmh = Math.round(Math.abs(state.speed) * 3.6);
 
+  // Escape key toggle for Race Menu
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Escape') {
+        e.preventDefault();
+        if (showQuitConfirm) {
+          setShowQuitConfirm(false);
+        } else if (showControlsModal) {
+          setShowControlsModal(false);
+        } else {
+          setShowMenu((prev) => !prev);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showQuitConfirm, showControlsModal]);
+
   // Position calculation
   const sortedPlayers = [...players].sort((a, b) => {
+    if (a.state.isQuit && !b.state.isQuit) return 1;
+    if (!a.state.isQuit && b.state.isQuit) return -1;
     if (a.state.finished && b.state.finished) {
       return (a.state.finishTime ?? Infinity) - (b.state.finishTime ?? Infinity);
     }
@@ -49,12 +79,34 @@ export const RaceHUD: React.FC<RaceHUDProps> = ({
   });
 
   const currentRank = sortedPlayers.findIndex((p) => p.id === localPlayer.id) + 1 || 1;
-  const totalRacers = players.length;
+  const activeRacersCount = players.filter((p) => !p.state.isQuit).length;
 
   const powerUpConfig = state.activePowerUp ? POWER_UPS[state.activePowerUp] : null;
 
   return (
     <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 md:p-6 overflow-hidden select-none">
+      {/* Reconnection Status Banner Overlay */}
+      {!isConnected && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-50 glass-panel-glow px-6 py-2.5 rounded-xl border border-amber-500/60 bg-amber-500/10 text-amber-300 font-mono-race text-xs tracking-wider shadow-2xl flex items-center gap-2.5 animate-pulse pointer-events-auto">
+          <WifiOff className="w-4 h-4 text-amber-400" />
+          <span>CONNECTION INTERRUPTED — RECONNECTING TO CIRCUIT...</span>
+        </div>
+      )}
+
+      {/* Rival Player Quit Toasts */}
+      {quitToasts.length > 0 && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 space-y-2 pointer-events-none">
+          {quitToasts.map((toast) => (
+            <div
+              key={toast.id}
+              className="glass-panel px-5 py-2 rounded-xl border border-rose-500/40 text-rose-300 font-mono-race text-xs tracking-wider shadow-xl flex items-center gap-2 animate-fadeIn"
+            >
+              <AlertTriangle className="w-4 h-4 text-rose-400" />
+              <span>RACER {toast.name.toUpperCase()} WITHDREW (QUIT)</span>
+            </div>
+          ))}
+        </div>
+      )}
       {/* EMP disruption static effect */}
       {state.empSlowTimer > 0 && (
         <div className="absolute inset-0 bg-yellow-500/15 pointer-events-none border-4 border-yellow-400 animate-pulse flex items-center justify-center">
@@ -112,7 +164,7 @@ export const RaceHUD: React.FC<RaceHUDProps> = ({
             <span className="font-display text-3xl md:text-4xl font-black text-cyan-400">
               {currentRank}
             </span>
-            <span className="text-sm font-bold text-gray-400 font-mono-race">/{totalRacers}</span>
+            <span className="text-sm font-bold text-gray-400 font-mono-race">/{activeRacersCount}</span>
           </div>
 
           {/* Lap Counter Card */}
@@ -167,7 +219,7 @@ export const RaceHUD: React.FC<RaceHUDProps> = ({
           </div>
         </div>
 
-        {/* Right: Sound toggle & Respawn Helper */}
+        {/* Right: Sound toggle, Respawn Helper & Race Menu */}
         <div className="flex items-center gap-2 pointer-events-auto">
           <button
             onClick={onRequestRespawn}
@@ -184,6 +236,15 @@ export const RaceHUD: React.FC<RaceHUDProps> = ({
             className="glass-panel hover:bg-white/10 p-2.5 rounded-xl border border-white/15 text-gray-300 hover:text-white transition active:scale-95 cursor-pointer"
           >
             {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-cyan-400" />}
+          </button>
+
+          <button
+            onClick={() => setShowMenu(true)}
+            title="Race Menu (ESC)"
+            className="glass-panel hover:bg-white/10 px-3 py-2.5 rounded-xl border border-white/15 text-white font-mono-race text-xs flex items-center gap-1.5 cursor-pointer transition active:scale-95"
+          >
+            <Menu className="w-4 h-4 text-cyan-400" />
+            <span className="hidden sm:inline">MENU</span>
           </button>
         </div>
       </div>
@@ -406,6 +467,156 @@ export const RaceHUD: React.FC<RaceHUDProps> = ({
           </button>
         </div>
       </div>
+
+      {/* PAUSE / RACE MENU OVERLAY */}
+      {showMenu && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 pointer-events-auto animate-fadeIn">
+          <div className="glass-panel-glow max-w-md w-full p-6 md:p-8 rounded-3xl border border-cyan-500/40 shadow-2xl text-center relative space-y-6">
+            <button
+              onClick={() => setShowMenu(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white p-2 rounded-xl transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div>
+              <div className="text-xs font-mono-race text-cyan-400 tracking-widest uppercase">CIRCUIT TELEMETRY</div>
+              <h2 className="font-display text-3xl font-black text-white tracking-wider mt-1">
+                PAUSE // MENU
+              </h2>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              <button
+                onClick={() => setShowMenu(false)}
+                className="w-full py-3.5 px-6 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-display font-black text-sm tracking-widest transition shadow-lg shadow-cyan-500/25 active:scale-98 cursor-pointer"
+              >
+                RESUME RACE
+              </button>
+
+              <button
+                onClick={() => setShowControlsModal(true)}
+                className="w-full py-3 px-6 rounded-xl glass-panel hover:bg-white/10 text-white font-mono-race text-xs tracking-wider border border-white/15 transition cursor-pointer"
+              >
+                CONTROLS & SHORTCUTS
+              </button>
+
+              <button
+                onClick={onToggleMute}
+                className="w-full py-3 px-6 rounded-xl glass-panel hover:bg-white/10 text-white font-mono-race text-xs tracking-wider border border-white/15 transition cursor-pointer flex items-center justify-center gap-2"
+              >
+                {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-cyan-400" />}
+                <span>{isMuted ? 'UNMUTE AUDIO' : 'MUTE AUDIO'}</span>
+              </button>
+
+              <div className="pt-2 border-t border-white/10">
+                <button
+                  onClick={() => setShowQuitConfirm(true)}
+                  className="w-full py-3 px-6 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/50 font-display font-bold text-xs tracking-widest transition cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <LogOut className="w-4 h-4 text-rose-400" />
+                  <span>QUIT RACE</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QUIT RACE CONFIRMATION DIALOG */}
+      {showQuitConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 pointer-events-auto animate-fadeIn">
+          <div className="glass-panel-glow max-w-sm w-full p-6 md:p-8 rounded-3xl border border-rose-500/50 shadow-2xl text-center space-y-5">
+            <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-500/50 flex items-center justify-center mx-auto text-rose-400">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+
+            <div>
+              <h3 className="font-display text-xl font-black text-white tracking-wider">
+                QUIT THIS RACE?
+              </h3>
+              <p className="text-xs font-mono-race text-gray-400 mt-2 leading-relaxed">
+                You will voluntarily leave the current race session and be marked as <span className="text-rose-400 font-bold">DNF (QUIT)</span>. Other racers will continue.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                onClick={() => setShowQuitConfirm(false)}
+                className="py-3 px-4 rounded-xl glass-panel hover:bg-white/10 text-gray-300 hover:text-white font-mono-race text-xs tracking-wider border border-white/15 transition cursor-pointer"
+              >
+                CANCEL
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowQuitConfirm(false);
+                  setShowMenu(false);
+                  onQuitRace();
+                }}
+                className="py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-display font-black text-xs tracking-wider transition shadow-lg shadow-rose-600/30 cursor-pointer"
+              >
+                CONFIRM QUIT
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONTROLS BRIEFING MODAL IN MENU */}
+      {showControlsModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 pointer-events-auto animate-fadeIn">
+          <div className="glass-panel-glow max-w-lg w-full p-6 md:p-8 rounded-3xl border border-cyan-500/40 shadow-2xl text-left space-y-5 relative">
+            <button
+              onClick={() => setShowControlsModal(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white p-2 rounded-xl transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div>
+              <div className="text-xs font-mono-race text-cyan-400 tracking-widest uppercase">GRID // 15</div>
+              <h3 className="font-display text-2xl font-black text-white tracking-wider mt-1">
+                RACE CONTROLS
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs font-mono-race">
+              <div className="p-3 rounded-xl glass-panel border border-white/10">
+                <span className="text-cyan-400 font-bold">ACCELERATE</span>
+                <p className="text-gray-300 mt-0.5">W / Arrow Up</p>
+              </div>
+              <div className="p-3 rounded-xl glass-panel border border-white/10">
+                <span className="text-rose-400 font-bold">BRAKE / REVERSE</span>
+                <p className="text-gray-300 mt-0.5">S / Arrow Down</p>
+              </div>
+              <div className="p-3 rounded-xl glass-panel border border-white/10">
+                <span className="text-emerald-400 font-bold">STEERING</span>
+                <p className="text-gray-300 mt-0.5">A / D / Left / Right</p>
+              </div>
+              <div className="p-3 rounded-xl glass-panel border border-white/10">
+                <span className="text-amber-400 font-bold">NITRO BOOST</span>
+                <p className="text-gray-300 mt-0.5">Shift / Space</p>
+              </div>
+              <div className="p-3 rounded-xl glass-panel border border-white/10">
+                <span className="text-purple-400 font-bold">USE POWER-UP</span>
+                <p className="text-gray-300 mt-0.5">Spacebar</p>
+              </div>
+              <div className="p-3 rounded-xl glass-panel border border-white/10">
+                <span className="text-cyan-300 font-bold">RESPAWN CAR</span>
+                <p className="text-gray-300 mt-0.5">R Key</p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowControlsModal(false)}
+              className="w-full py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-display font-black text-xs tracking-widest transition cursor-pointer"
+            >
+              CLOSE
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

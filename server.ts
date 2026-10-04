@@ -439,24 +439,25 @@ function endRace(room: ServerRoom) {
   room.state = 'RESULTS';
 
   const leaderboard = computeLeaderboard(room.players);
-  const winnerFinishTime = room.players.find((p) => p.state.finished)?.state.finishTime || room.raceElapsedMs;
+  const winnerFinishTime = room.players.find((p) => p.state.finished && !p.state.isQuit)?.state.finishTime || room.raceElapsedMs;
 
   const results: RaceResultEntry[] = leaderboard.map((item) => {
     const player = room.players.find((p) => p.id === item.id)!;
-    const hasFinished = Boolean(player.state.finished);
+    const isQuit = Boolean(player.state.isQuit);
+    const hasFinished = Boolean(player.state.finished) && !isQuit;
     const playerTime = hasFinished ? (player.state.finishTime ?? room.raceElapsedMs) : null;
     const gapMs = item.rank === 1 ? 0 : (hasFinished && playerTime !== null ? Math.max(0, playerTime - winnerFinishTime) : 0);
 
     return {
-      rank: item.rank,
+      rank: isQuit ? 99 : item.rank,
       playerId: player.id,
-      name: player.name,
+      name: isQuit ? `${player.name} (QUIT)` : player.name,
       carNumber: player.carConfig.carNumber,
       carConfig: player.carConfig,
       totalTimeMs: playerTime,
       gapMs,
-      bestLapMs: player.state.bestLapTime,
-      completedLaps: Math.min(room.lapCount, player.state.lap - 1 + (hasFinished ? 1 : 0)),
+      bestLapMs: isQuit ? null : player.state.bestLapTime,
+      completedLaps: isQuit ? player.state.lap - 1 : Math.min(room.lapCount, player.state.lap - 1 + (hasFinished ? 1 : 0)),
       powerUpsUsed: room.powerUpsUsedCount.get(player.id) || 0,
     };
   });
@@ -832,6 +833,49 @@ wss.on('connection', (ws: WebSocket) => {
             player.state.steerAngle = 0;
             player.state.lastRespawnTimestamp = now;
             room.playerSequenceNumbers.delete(currentPlayerId);
+          }
+          break;
+        }
+
+        case 'QUIT_RACE': {
+          if (!currentRoomCode || !currentPlayerId) return;
+          const room = rooms.get(currentRoomCode);
+          if (!room || room.state !== 'RACING') return;
+
+          const player = room.players.find((p) => p.id === currentPlayerId);
+          if (player) {
+            player.state.finished = true;
+            player.state.isQuit = true;
+            player.state.finishTime = null;
+            room.playerInputs.delete(currentPlayerId);
+
+            ws.send(JSON.stringify({ type: 'RACE_LEFT' }));
+
+            broadcastToRoom(room, {
+              type: 'PLAYER_QUIT',
+              payload: { playerId: player.id, name: player.name },
+            });
+
+            // Host migration if host quit
+            if (room.hostId === currentPlayerId && room.players.length > 0) {
+              player.isHost = false;
+              const nextActive = room.players.find((p) => p.isConnected && !p.state.isQuit) || room.players.find((p) => p.isConnected) || room.players[0];
+              if (nextActive) {
+                room.hostId = nextActive.id;
+                nextActive.isHost = true;
+              }
+            }
+
+            const activeRacers = room.players.filter((p) => p.isConnected && !p.state.isQuit);
+            const remainingUnfinished = activeRacers.filter((p) => !p.state.finished);
+            if (remainingUnfinished.length === 0) {
+              endRace(room);
+            } else {
+              broadcastToRoom(room, {
+                type: 'ROOM_UPDATE',
+                payload: { room: getCleanRoomInfo(room) },
+              });
+            }
           }
           break;
         }

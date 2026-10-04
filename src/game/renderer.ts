@@ -259,17 +259,24 @@ export class RaceRenderer {
     const activeIds = new Set<string>();
 
     for (const player of players) {
+      if (player.state.finished && player.state.isQuit) continue; // clean up quit players
       activeIds.add(player.id);
       let carObj = this.carMeshes.get(player.id);
 
       const pState = (player.id === this.localPlayerId && localPredictedState) ? localPredictedState : player.state;
 
+      // Sanitize physics state coordinates
+      const px = Number.isFinite(pState.x) ? pState.x : 0;
+      const py = Number.isFinite(pState.y) ? pState.y : 0.1;
+      const pz = Number.isFinite(pState.z) ? pState.z : 0;
+      const protY = Number.isFinite(pState.rotationY) ? pState.rotationY : 0;
+
       if (!carObj) {
         carObj = createOpenWheelCarMesh(player.carConfig);
         this.carMeshes.set(player.id, carObj);
         this.scene.add(carObj.root);
-        carObj.root.position.set(pState.x, pState.y, pState.z);
-        carObj.root.rotation.y = pState.rotationY;
+        carObj.root.position.set(px, py, pz);
+        carObj.root.rotation.y = protY;
       }
 
       // 1. Manage username floating 3D nametags above vehicle
@@ -284,15 +291,14 @@ export class RaceRenderer {
       // Distance-based adaptive scaling and visibility
       const dist = this.camera.position.distanceTo(carObj.root.position);
       if (player.id === this.localPlayerId) {
-        // Show subtle indicator or hide local player name tag based on preferences. Let's make it small and neat!
         nameTag.visible = true;
         nameTag.scale.set(1.4, 0.35, 1);
       } else {
         if (dist < 4) {
           nameTag.visible = true;
-          nameTag.scale.set(1.4, 0.35, 1); // Clamp visual size close up
+          nameTag.scale.set(1.4, 0.35, 1);
         } else if (dist > 115) {
-          nameTag.visible = false; // Hide if extremely far to maximize performance
+          nameTag.visible = false;
         } else {
           nameTag.visible = true;
           const scale = Math.min(3.2, 1.4 + (dist - 4) * 0.02);
@@ -309,8 +315,8 @@ export class RaceRenderer {
 
       if (player.id === this.localPlayerId) {
         // Local car: direct high-frequency prediction representation (NO LERP delay)
-        carObj.root.position.set(pState.x, pState.y, pState.z);
-        carObj.root.rotation.y = pState.rotationY;
+        carObj.root.position.set(px, py, pz);
+        carObj.root.rotation.y = protY;
 
         carObj.updateVisualState(
           pState.steerAngle,
@@ -327,35 +333,36 @@ export class RaceRenderer {
           pState.suspensionCompression
         );
       } else {
-        // Remote car: buttery Hermite/LERP interpolation towards target snapshot
-        const target = this.remoteTargets.get(player.id);
+        // Remote car: smooth Hermite/LERP interpolation towards target snapshot
+        let target = this.remoteTargets.get(player.id);
         if (!target) {
-          this.remoteTargets.set(player.id, {
-            x: pState.x,
-            y: pState.y,
-            z: pState.z,
-            rotationY: pState.rotationY,
+          target = {
+            x: px,
+            y: py,
+            z: pz,
+            rotationY: protY,
             speed: pState.speed,
             steer: pState.steerAngle,
-          });
+          };
+          this.remoteTargets.set(player.id, target);
         } else {
-          target.x = pState.x;
-          target.y = pState.y;
-          target.z = pState.z;
-          target.rotationY = pState.rotationY;
+          target.x = px;
+          target.y = py;
+          target.z = pz;
+          target.rotationY = protY;
           target.speed = pState.speed;
           target.steer = pState.steerAngle;
         }
 
         // Interpolate position smoothly
         const lerpFactor = Math.min(1.0, 16.0 * dt);
-        carObj.root.position.x += (pState.x - carObj.root.position.x) * lerpFactor;
-        carObj.root.position.y += (pState.y - carObj.root.position.y) * lerpFactor;
-        carObj.root.position.z += (pState.z - carObj.root.position.z) * lerpFactor;
+        carObj.root.position.x += (target.x - carObj.root.position.x) * lerpFactor;
+        carObj.root.position.y += (target.y - carObj.root.position.y) * lerpFactor;
+        carObj.root.position.z += (target.z - carObj.root.position.z) * lerpFactor;
 
         // Shortest-arc angle lerp
         const currentAngle = carObj.root.rotation.y;
-        let targetAngle = pState.rotationY;
+        let targetAngle = target.rotationY;
         let angleDiff = (targetAngle - currentAngle + Math.PI * 3) % (Math.PI * 2) - Math.PI;
         carObj.root.rotation.y += angleDiff * lerpFactor;
 
@@ -445,8 +452,11 @@ export class RaceRenderer {
   public updateCamera(localPlayerState: PlayerPhysicsState, dt: number) {
     if (!localPlayerState) return;
 
-    const carPos = new THREE.Vector3(localPlayerState.x, localPlayerState.y, localPlayerState.z);
-    const carRotY = localPlayerState.rotationY;
+    const px = Number.isFinite(localPlayerState.x) ? localPlayerState.x : 0;
+    const py = Number.isFinite(localPlayerState.y) ? localPlayerState.y : 0.1;
+    const pz = Number.isFinite(localPlayerState.z) ? localPlayerState.z : 0;
+    const carPos = new THREE.Vector3(px, py, pz);
+    const carRotY = Number.isFinite(localPlayerState.rotationY) ? localPlayerState.rotationY : 0;
 
     // Forward and Right vectors of car
     const fwdX = Math.sin(carRotY);
@@ -455,7 +465,8 @@ export class RaceRenderer {
     const rightZ = -Math.sin(carRotY);
 
     // Higher speed pulls camera slightly further back with higher elevation
-    const speedRatio = Math.min(1.0, Math.abs(localPlayerState.speed) / 80);
+    const speed = Number.isFinite(localPlayerState.speed) ? localPlayerState.speed : 0;
+    const speedRatio = Math.min(1.0, Math.abs(speed) / 80);
     const dynamicDist = 6.4 + speedRatio * 1.8;
     const dynamicHeight = 2.5 + speedRatio * 0.5;
 
@@ -467,9 +478,9 @@ export class RaceRenderer {
     );
 
     // Look-ahead target with corner anticipation:
-    // Offsets look-at point into the turn apex based on steer angle so corners are readable
     const forwardLead = 7.0 + speedRatio * 9.0;
-    const cornerLead = localPlayerState.steerAngle * 4.2;
+    const steer = Number.isFinite(localPlayerState.steerAngle) ? localPlayerState.steerAngle : 0;
+    const cornerLead = steer * 4.2;
 
     const targetLookAt = new THREE.Vector3(
       carPos.x + fwdX * forwardLead + rightX * cornerLead,
@@ -479,7 +490,7 @@ export class RaceRenderer {
 
     // Respawn snap check: If distance jumped > 25 meters, snap immediately without wild camera sweep
     const distToTarget = this.currentCameraPos.distanceTo(targetCamPos);
-    if (distToTarget > 25) {
+    if (distToTarget > 25 || !Number.isFinite(this.currentCameraPos.x)) {
       this.currentCameraPos.copy(targetCamPos);
       this.currentCameraTarget.copy(targetLookAt);
     } else {

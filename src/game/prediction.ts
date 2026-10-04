@@ -39,11 +39,21 @@ export class ClientPredictionEngine {
    */
   public getRenderState(): PlayerPhysicsState | null {
     if (!this.predictedState) return null;
+
+    const x = Number.isFinite(this.predictedState.x) ? this.predictedState.x : 0;
+    const y = Number.isFinite(this.predictedState.y) ? this.predictedState.y : 0.1;
+    const z = Number.isFinite(this.predictedState.z) ? this.predictedState.z : 0;
+    const rot = Number.isFinite(this.predictedState.rotationY) ? this.predictedState.rotationY : 0;
+    const errX = Number.isFinite(this.errorOffsetPos.x) ? this.errorOffsetPos.x : 0;
+    const errZ = Number.isFinite(this.errorOffsetPos.z) ? this.errorOffsetPos.z : 0;
+    const errRot = Number.isFinite(this.errorOffsetRot) ? this.errorOffsetRot : 0;
+
     return {
       ...this.predictedState,
-      x: this.predictedState.x + this.errorOffsetPos.x,
-      z: this.predictedState.z + this.errorOffsetPos.z,
-      rotationY: this.predictedState.rotationY + this.errorOffsetRot,
+      x: x + errX,
+      y,
+      z: z + errZ,
+      rotationY: rot + errRot,
     };
   }
 
@@ -82,7 +92,7 @@ export class ClientPredictionEngine {
     });
 
     // Limit buffer length to prevent memory leaks if server drops connection
-    if (this.pendingInputs.length > 150) {
+    if (this.pendingInputs.length > 60) {
       this.pendingInputs.shift();
     }
 
@@ -98,6 +108,15 @@ export class ClientPredictionEngine {
       true, // raceStarted = true
       raceConfig
     );
+
+    // Sanitize position/rotation from potential NaN or Infinity
+    if (!Number.isFinite(this.predictedState.x) || !Number.isFinite(this.predictedState.z)) {
+      this.predictedState.x = 0;
+      this.predictedState.z = 0;
+      this.predictedState.speed = 0;
+      this.predictedState.vx = 0;
+      this.predictedState.vz = 0;
+    }
 
     // Exponential decay of visual smoothing offset (decays to 0 over ~100ms without touching physics)
     const decay = Math.min(1.0, 18.0 * dt);
@@ -148,9 +167,24 @@ export class ClientPredictionEngine {
 
     const serverAckSeq = serverState.lastProcessedSequenceNumber || 0;
 
+    // Reset sequence tracking if server state indicates a reconnect or sequence reset
+    if (serverAckSeq === 0 || this.sequenceNumber - serverAckSeq > 300) {
+      this.predictedState = JSON.parse(JSON.stringify(serverState));
+      this.sequenceNumber = serverAckSeq;
+      this.pendingInputs = [];
+      this.errorOffsetPos = { x: 0, z: 0 };
+      this.errorOffsetRot = 0;
+      return;
+    }
+
     // Drop all acknowledged inputs
     this.pendingInputs = this.pendingInputs.filter((item) => item.sequenceNumber > serverAckSeq);
     this.lastAckSequenceNumber = serverAckSeq;
+
+    // Cap pending replay to at most 30 inputs to avoid CPU thrashing / physics explosions
+    if (this.pendingInputs.length > 30) {
+      this.pendingInputs = this.pendingInputs.slice(-30);
+    }
 
     // Simulate from server state forward to current sequence
     const replayedState: PlayerPhysicsState = JSON.parse(JSON.stringify(serverState));
@@ -166,6 +200,15 @@ export class ClientPredictionEngine {
         true,
         raceConfig
       );
+    }
+
+    // Verify validity of replayed state
+    if (!Number.isFinite(replayedState.x) || !Number.isFinite(replayedState.z)) {
+      this.predictedState = JSON.parse(JSON.stringify(serverState));
+      this.pendingInputs = [];
+      this.errorOffsetPos = { x: 0, z: 0 };
+      this.errorOffsetRot = 0;
+      return;
     }
 
     // Current uncorrected predicted position and heading

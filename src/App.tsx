@@ -80,12 +80,20 @@ export default function App() {
     setIsMuted(muted);
   };
 
+  const [isConnected, setIsConnected] = useState(true);
+  const [quitToasts, setQuitToasts] = useState<{ id: string; name: string }[]>([]);
+
   // Setup WebSocket Listeners
   useEffect(() => {
+    const unsubConn = net.on('CONNECTION_CHANGE', (payload: { isConnected: boolean }) => {
+      setIsConnected(payload.isConnected);
+    });
+
     const unsubCreated = net.on('ROOM_CREATED', (payload: { roomCode: string; playerId: string; room: RoomInfo }) => {
       setLocalPlayerId(payload.playerId);
       setRoom(payload.room);
       roomRef.current = payload.room;
+      net.setSessionMeta({ roomCode: payload.roomCode, playerId: payload.playerId, carConfig: customization });
       setView('LOBBY');
       setIsConnecting(false);
     });
@@ -94,7 +102,11 @@ export default function App() {
       setLocalPlayerId(payload.playerId);
       setRoom(payload.room);
       roomRef.current = payload.room;
-      if (payload.room.state === 'RACING') {
+      net.setSessionMeta({ roomCode: payload.roomCode, playerId: payload.playerId, carConfig: customization });
+
+      const local = payload.room.players.find((p) => p.id === payload.playerId);
+      if (local && payload.room.state === 'RACING') {
+        predictionEngineRef.current.init(local.state);
         setView('RACE');
       } else if (payload.room.state === 'RESULTS') {
         setView('RESULTS');
@@ -130,6 +142,11 @@ export default function App() {
       setCountdown(null);
       setShowControlsBriefing(false);
       setHasRacedBefore(true);
+
+      const local = payload.room.players.find((p) => p.id === localPlayerId);
+      if (local) {
+        predictionEngineRef.current.init(local.state);
+      }
       setView('RACE');
     });
 
@@ -185,6 +202,21 @@ export default function App() {
       }
     });
 
+    const unsubPlayerQuit = net.on('PLAYER_QUIT', (payload: { playerId: string; name: string }) => {
+      const toastId = `quit_${Date.now()}_${Math.random()}`;
+      setQuitToasts((prev) => [...prev, { id: toastId, name: payload.name }]);
+      setTimeout(() => {
+        setQuitToasts((prev) => prev.filter((t) => t.id !== toastId));
+      }, 4000);
+    });
+
+    const unsubRaceLeft = net.on('RACE_LEFT', () => {
+      soundEngine.stopVehicleSound();
+      setView('LOBBY');
+      setErrorMessage('You left the race session');
+      setTimeout(() => setErrorMessage(null), 3500);
+    });
+
     const unsubFinished = net.on('RACE_FINISHED', (payload: { results: RaceResultEntry[]; room?: RoomInfo }) => {
       setResults(payload.results || []);
       if (payload.room) {
@@ -202,6 +234,7 @@ export default function App() {
     });
 
     return () => {
+      unsubConn();
       unsubCreated();
       unsubJoined();
       unsubUpdate();
@@ -210,6 +243,8 @@ export default function App() {
       unsubGameTick();
       unsubPowerUpCollected();
       unsubPowerUpTriggered();
+      unsubPlayerQuit();
+      unsubRaceLeft();
       unsubFinished();
       unsubError();
     };
@@ -280,12 +315,17 @@ export default function App() {
   };
 
   const handleLeaveRoom = () => {
+    net.setSessionMeta(null);
     net.disconnect();
     setRoom(null);
     roomRef.current = null;
     setLocalPlayerId(null);
     setView('MENU');
     soundEngine.stopVehicleSound();
+  };
+
+  const handleQuitRace = () => {
+    net.send({ type: 'QUIT_RACE' });
   };
 
   const handleRematch = () => {
@@ -531,10 +571,13 @@ export default function App() {
             countdown={countdown}
             onUsePowerUp={handleUsePowerUp}
             onRequestRespawn={handleRequestRespawn}
+            onQuitRace={handleQuitRace}
             touchInput={touchInput}
             setTouchInput={setTouchInput}
             isMuted={isMuted}
             onToggleMute={handleToggleMute}
+            isConnected={isConnected}
+            quitToasts={quitToasts}
           />
         </div>
       )}

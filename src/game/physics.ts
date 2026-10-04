@@ -819,6 +819,10 @@ export function computeLeaderboard(
   players: { id: string; state: PlayerPhysicsState }[]
 ): { id: string; rank: number }[] {
   const sorted = [...players].sort((a, b) => {
+    // 0. Quit players sort at the back
+    if (a.state.isQuit && !b.state.isQuit) return 1;
+    if (!a.state.isQuit && b.state.isQuit) return -1;
+
     // 1. Finished players rank by finish time
     if (a.state.finished && b.state.finished) {
       return (a.state.finishTime ?? Infinity) - (b.state.finishTime ?? Infinity);

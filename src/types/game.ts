@@ -55,6 +55,7 @@ export interface PlayerPhysicsState {
   trackProgress: number; // 0 to 1 along current lap
   totalDistance: number; // continuously increases
   finished: boolean;
+  isQuit?: boolean;
   finishTime: number | null; // ms from race start
   currentLapTime: number;    // ms
   bestLapTime: number | null; // ms
@@ -209,6 +210,7 @@ export type ClientMessage =
   | { type: 'INPUT_UPDATE'; payload: { input: PlayerInput; sequenceNumber?: number; timestamp: number } }
   | { type: 'USE_POWERUP' }
   | { type: 'REQUEST_RESPAWN' }
+  | { type: 'QUIT_RACE' }
   | { type: 'REMATCH' }
   | { type: 'RETURN_TO_LOBBY' }
   | { type: 'UPDATE_RACE_CONFIG'; payload: { raceConfig: RaceConfig } }
@@ -225,6 +227,8 @@ export type ServerMessage =
   | { type: 'POWERUP_COLLECTED'; payload: { playerId: string; powerUp: PowerUpType; boxId: number } }
   | { type: 'POWERUP_TRIGGERED'; payload: { playerId: string; powerUp: PowerUpType; targetIds?: string[] } }
   | { type: 'PLAYER_FINISHED'; payload: { playerId: string; rank: number; finishTime: number } }
+  | { type: 'PLAYER_QUIT'; payload: { playerId: string; name: string } }
+  | { type: 'RACE_LEFT' }
   | { type: 'RACE_FINISHED'; payload: { results: RaceResultEntry[]; room?: RoomInfo } }
   | { type: 'PONG'; payload: { clientTimestamp: number; serverTimestamp: number } }
   | { type: 'ERROR'; payload: { message: string } };
