@@ -16,6 +16,8 @@ import { net } from './game/network';
 import { InputManager } from './game/input';
 import { RaceRenderer } from './game/renderer';
 import { soundEngine } from './game/audio';
+import { ClientPredictionEngine } from './game/prediction';
+import { TrackGeometry } from './game/physics';
 import { MainMenu } from './components/MainMenu';
 import { Garage } from './components/Garage';
 import { Lobby } from './components/Lobby';
@@ -50,6 +52,7 @@ export default function App() {
   const raceContainerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<RaceRenderer | null>(null);
   const inputManagerRef = useRef<InputManager | null>(null);
+  const predictionEngineRef = useRef<ClientPredictionEngine>(new ClientPredictionEngine());
   const lastHudUpdateRef = useRef<number>(0);
 
   const [touchInput, setTouchInput] = useState<PlayerInput>({
@@ -130,16 +133,31 @@ export default function App() {
       setView('RACE');
     });
 
-    // Decoupled 30Hz network update into mutable ref
+    // Decoupled 30Hz network update into mutable ref + client prediction reconciliation
     const unsubGameTick = net.on('GAME_TICK', (payload: {
       players: { [id: string]: PlayerPhysicsState };
       powerUps: PowerUpBox[];
       raceElapsedMs: number;
     }) => {
       if (roomRef.current) {
+        const trackData = TRACKS[roomRef.current.trackId] || DEFAULT_TRACK;
+        const trackGeo = new TrackGeometry(trackData.trackPoints);
+
         for (const p of roomRef.current.players) {
           if (payload.players[p.id]) {
-            p.state = payload.players[p.id];
+            if (p.id === localPlayerId) {
+              predictionEngineRef.current.reconcile(
+                payload.players[p.id],
+                trackGeo,
+                trackData,
+                roomRef.current.lapCount,
+                roomRef.current.raceConfig
+              );
+              const localRender = predictionEngineRef.current.getRenderState();
+              p.state = localRender || payload.players[p.id];
+            } else {
+              p.state = payload.players[p.id];
+            }
           }
         }
         roomRef.current.powerUps = payload.powerUps;
@@ -283,6 +301,9 @@ export default function App() {
   };
 
   const handleRequestRespawn = () => {
+    const activeTrackData = TRACKS[roomRef.current?.trackId || ''] || DEFAULT_TRACK;
+    const activeTrackGeo = new TrackGeometry(activeTrackData.trackPoints);
+    predictionEngineRef.current.triggerRespawn(activeTrackGeo);
     net.send({ type: 'REQUEST_RESPAWN' });
   };
 
@@ -317,6 +338,12 @@ export default function App() {
     const inputManager = new InputManager();
     inputManagerRef.current = inputManager;
 
+    // Initialize local client prediction engine with current player state
+    const currentLocalPlayer = roomRef.current.players.find((p) => p.id === localPlayerId);
+    if (currentLocalPlayer) {
+      predictionEngineRef.current.init(currentLocalPlayer.state);
+    }
+
     let animId: number;
     let lastTime = performance.now();
     let lastNetworkSend = 0;
@@ -341,20 +368,36 @@ export default function App() {
       const currentActiveRoom = roomRef.current;
       const currentLocal = currentActiveRoom?.players.find((p) => p.id === localPlayerId);
       const isFinished = currentLocal?.state.finished || false;
-      const input = isFinished
+      const rawInput = isFinished
         ? { throttle: 0, brake: 0.25, steer: 0, boost: false, usePowerUp: false, respawn: false }
         : inputManager.getInput();
 
-      // Transmit input to authoritative server at ~30Hz
-      if (time - lastNetworkSend > 33 && !isFinished) {
+      const activeTrackData = TRACKS[currentActiveRoom?.trackId || ''] || DEFAULT_TRACK;
+      const activeTrackGeo = new TrackGeometry(activeTrackData.trackPoints);
+
+      // Run immediate 60+ FPS client-side prediction physics
+      const predictedInput = predictionEngineRef.current.predictFrame(
+        rawInput,
+        dt,
+        activeTrackGeo,
+        activeTrackData,
+        currentActiveRoom?.lapCount || 3,
+        currentActiveRoom?.raceConfig
+      );
+
+      // Transmit input with sequenceNumber to authoritative server on each predicted frame
+      if (!isFinished) {
         net.send({
           type: 'INPUT_UPDATE',
-          payload: { input, timestamp: Date.now() },
+          payload: {
+            input: predictedInput,
+            sequenceNumber: predictedInput.sequenceNumber,
+            timestamp: Date.now(),
+          },
         });
-        lastNetworkSend = time;
       }
 
-      if (input.usePowerUp) {
+      if (predictedInput.usePowerUp) {
         if (!wasPowerUpPressed) {
           net.send({ type: 'USE_POWERUP' });
           wasPowerUpPressed = true;
@@ -363,27 +406,30 @@ export default function App() {
         wasPowerUpPressed = false;
       }
 
-      if (input.respawn) {
-        net.send({ type: 'REQUEST_RESPAWN' });
+      if (predictedInput.respawn) {
+        handleRequestRespawn();
       }
 
-      // Sync renderer directly with mutable roomRef
-      const activeRoom = roomRef.current;
-      if (activeRoom && activeRoom.players) {
-        renderer.syncPlayers(activeRoom.players, dt);
-        renderer.syncPowerUps(activeRoom.powerUps);
+      const localRenderState = predictionEngineRef.current.getRenderState() || currentLocal?.state;
+      if (currentLocal && localRenderState) {
+        currentLocal.state = localRenderState;
+      }
 
-        const localPlayer = activeRoom.players.find((p) => p.id === localPlayerId);
-        if (localPlayer) {
-          renderer.updateCamera(localPlayer.state, dt);
+      // Sync renderer with predicted state for local player and interpolated snapshots for opponents
+      if (currentActiveRoom && currentActiveRoom.players) {
+        renderer.syncPlayers(currentActiveRoom.players, dt, localRenderState);
+        renderer.syncPowerUps(currentActiveRoom.powerUps);
+
+        if (localRenderState) {
+          renderer.updateCamera(localRenderState, dt);
 
           // Update dynamic engine audio pitch & tire screech
-          const speedKmh = Math.abs(localPlayer.state.speed) * 3.6;
+          const speedKmh = Math.abs(localRenderState.speed) * 3.6;
           soundEngine.updateVehicleSound(
             speedKmh,
-            input.throttle > 0,
-            localPlayer.state.isDrifting,
-            localPlayer.state.isBoosting
+            predictedInput.throttle > 0,
+            localRenderState.isDrifting,
+            localRenderState.isBoosting
           );
         }
       }
@@ -408,7 +454,12 @@ export default function App() {
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden select-none" onClick={handleUserGesture}>
       {/* Dev Diagnostics Overlay (~ key to toggle) */}
-      <DiagnosticsPanel room={activeRoom} localPlayer={localPlayer} fps={fps} />
+      <DiagnosticsPanel
+        room={activeRoom}
+        localPlayer={localPlayer}
+        fps={fps}
+        predictionEngine={predictionEngineRef.current}
+      />
 
       {/* Global Error Toast */}
       {errorMessage && (

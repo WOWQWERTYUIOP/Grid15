@@ -255,19 +255,21 @@ export class RaceRenderer {
   }
 
   // Sync player car 3D representations with interpolation for remote cars
-  public syncPlayers(players: Player[], dt = 0.016) {
+  public syncPlayers(players: Player[], dt = 0.016, localPredictedState?: PlayerPhysicsState | null) {
     const activeIds = new Set<string>();
 
     for (const player of players) {
       activeIds.add(player.id);
       let carObj = this.carMeshes.get(player.id);
 
+      const pState = (player.id === this.localPlayerId && localPredictedState) ? localPredictedState : player.state;
+
       if (!carObj) {
         carObj = createOpenWheelCarMesh(player.carConfig);
         this.carMeshes.set(player.id, carObj);
         this.scene.add(carObj.root);
-        carObj.root.position.set(player.state.x, player.state.y, player.state.z);
-        carObj.root.rotation.y = player.state.rotationY;
+        carObj.root.position.set(pState.x, pState.y, pState.z);
+        carObj.root.rotation.y = pState.rotationY;
       }
 
       // 1. Manage username floating 3D nametags above vehicle
@@ -298,78 +300,78 @@ export class RaceRenderer {
         }
       }
 
-      const isBraking = (player.state.pitch !== undefined && player.state.pitch < -0.015);
-      const isGripBoosted = Boolean(player.state.gripBoostTimer && player.state.gripBoostTimer > 0);
+      const isBraking = (pState.pitch !== undefined && pState.pitch < -0.015);
+      const isGripBoosted = Boolean(pState.gripBoostTimer && pState.gripBoostTimer > 0);
       const isDraftStreaming = Boolean(
-        (player.state.draftStreamTimer && player.state.draftStreamTimer > 0) ||
-        player.state.slipstreamFactor > 0.4
+        (pState.draftStreamTimer && pState.draftStreamTimer > 0) ||
+        pState.slipstreamFactor > 0.4
       );
 
       if (player.id === this.localPlayerId) {
-        // Local car: direct high-frequency representation
-        carObj.root.position.set(player.state.x, player.state.y, player.state.z);
-        carObj.root.rotation.y = player.state.rotationY;
+        // Local car: direct high-frequency prediction representation (NO LERP delay)
+        carObj.root.position.set(pState.x, pState.y, pState.z);
+        carObj.root.rotation.y = pState.rotationY;
 
         carObj.updateVisualState(
-          player.state.steerAngle,
-          player.state.speed,
-          player.state.isBoosting || Boolean(player.state.turboTimer && player.state.turboTimer > 0),
-          player.state.hasShield,
-          player.state.isDrifting,
+          pState.steerAngle,
+          pState.speed,
+          pState.isBoosting || Boolean(pState.turboTimer && pState.turboTimer > 0),
+          pState.hasShield,
+          pState.isDrifting,
           dt,
-          player.state.pitch,
-          player.state.roll,
+          pState.pitch,
+          pState.roll,
           isBraking,
           isGripBoosted,
           isDraftStreaming,
-          player.state.suspensionCompression
+          pState.suspensionCompression
         );
       } else {
         // Remote car: buttery Hermite/LERP interpolation towards target snapshot
         const target = this.remoteTargets.get(player.id);
         if (!target) {
           this.remoteTargets.set(player.id, {
-            x: player.state.x,
-            y: player.state.y,
-            z: player.state.z,
-            rotationY: player.state.rotationY,
-            speed: player.state.speed,
-            steer: player.state.steerAngle,
+            x: pState.x,
+            y: pState.y,
+            z: pState.z,
+            rotationY: pState.rotationY,
+            speed: pState.speed,
+            steer: pState.steerAngle,
           });
         } else {
-          target.x = player.state.x;
-          target.y = player.state.y;
-          target.z = player.state.z;
-          target.rotationY = player.state.rotationY;
-          target.speed = player.state.speed;
-          target.steer = player.state.steerAngle;
+          target.x = pState.x;
+          target.y = pState.y;
+          target.z = pState.z;
+          target.rotationY = pState.rotationY;
+          target.speed = pState.speed;
+          target.steer = pState.steerAngle;
         }
 
         // Interpolate position smoothly
         const lerpFactor = Math.min(1.0, 16.0 * dt);
-        carObj.root.position.x += (player.state.x - carObj.root.position.x) * lerpFactor;
-        carObj.root.position.y += (player.state.y - carObj.root.position.y) * lerpFactor;
-        carObj.root.position.z += (player.state.z - carObj.root.position.z) * lerpFactor;
+        carObj.root.position.x += (pState.x - carObj.root.position.x) * lerpFactor;
+        carObj.root.position.y += (pState.y - carObj.root.position.y) * lerpFactor;
+        carObj.root.position.z += (pState.z - carObj.root.position.z) * lerpFactor;
 
         // Shortest-arc angle lerp
         const currentAngle = carObj.root.rotation.y;
-        let targetAngle = player.state.rotationY;
+        let targetAngle = pState.rotationY;
         let angleDiff = (targetAngle - currentAngle + Math.PI * 3) % (Math.PI * 2) - Math.PI;
         carObj.root.rotation.y += angleDiff * lerpFactor;
 
         carObj.updateVisualState(
-          player.state.steerAngle,
-          player.state.speed,
-          player.state.isBoosting || Boolean(player.state.turboTimer && player.state.turboTimer > 0),
-          player.state.hasShield,
-          player.state.isDrifting,
+          pState.steerAngle,
+          pState.speed,
+          pState.isBoosting || Boolean(pState.turboTimer && pState.turboTimer > 0),
+          pState.hasShield,
+          pState.isDrifting,
           dt,
-          player.state.pitch,
-          player.state.roll,
+          pState.pitch,
+          pState.roll,
           isBraking,
           isGripBoosted,
           isDraftStreaming,
-          player.state.suspensionCompression
+          pState.suspensionCompression
         );
       }
     }

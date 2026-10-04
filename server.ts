@@ -31,6 +31,7 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 interface ServerRoom extends RoomInfo {
   clients: Map<string, WebSocket>;
   playerInputs: Map<string, PlayerInput>;
+  playerSequenceNumbers: Map<string, number>;
   lastRespawnTimes: Map<string, number>;
   trackGeo: TrackGeometry;
   tickInterval: NodeJS.Timeout | null;
@@ -237,6 +238,7 @@ function startRaceLoop(room: ServerRoom) {
       }
 
       stepPhysics(player.state, input, dt, trackGeo, track, room.lapCount, DEFAULT_PHYSICS_CONFIG, true, room.raceConfig);
+      player.state.lastProcessedSequenceNumber = room.playerSequenceNumbers.get(player.id) || 0;
 
       // Server-side movement validation (Anti-Cheat check)
       const distMoved = Math.hypot(player.state.x - oldX, player.state.z - oldZ);
@@ -517,6 +519,7 @@ wss.on('connection', (ws: WebSocket) => {
             powerUps: createTrackPowerUps(trackId, initialConfig),
             clients: new Map([[playerId, ws]]),
             playerInputs: new Map(),
+            playerSequenceNumbers: new Map(),
             lastRespawnTimes: new Map(),
             trackGeo,
             tickInterval: null,
@@ -766,7 +769,17 @@ wss.on('connection', (ws: WebSocket) => {
           const player = room.players.find((p) => p.id === currentPlayerId);
           if (player && !player.state.finished) {
             const sanitized = sanitizeInput(msg.payload?.input);
-            room.playerInputs.set(currentPlayerId, sanitized);
+            const seq = typeof msg.payload?.sequenceNumber === 'number' && Number.isFinite(msg.payload.sequenceNumber)
+              ? msg.payload.sequenceNumber
+              : (typeof msg.payload?.input?.sequenceNumber === 'number' ? msg.payload.input.sequenceNumber : 0);
+            
+            const lastSeq = room.playerSequenceNumbers.get(currentPlayerId) || 0;
+            if (seq > lastSeq || seq === 0) {
+              room.playerInputs.set(currentPlayerId, sanitized);
+              if (seq > 0) {
+                room.playerSequenceNumbers.set(currentPlayerId, seq);
+              }
+            }
           }
           break;
         }
@@ -817,6 +830,8 @@ wss.on('connection', (ws: WebSocket) => {
             player.state.vz = 0;
             player.state.angularVelocity = 0;
             player.state.steerAngle = 0;
+            player.state.lastRespawnTimestamp = now;
+            room.playerSequenceNumbers.delete(currentPlayerId);
           }
           break;
         }

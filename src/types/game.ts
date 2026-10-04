@@ -22,6 +22,7 @@ export interface PlayerInput {
   boost: boolean;
   usePowerUp: boolean;
   respawn?: boolean;
+  sequenceNumber?: number;
 }
 
 export interface PlayerPhysicsState {
@@ -62,10 +63,13 @@ export interface PlayerPhysicsState {
   currentGear: number;       // 1 to 7, 0 = Reverse
   engineRpm: number;         // 1000 to 15000
   // Four-wheel vehicle dynamics telemetry
-  pitch?: number;            // chassis pitch angle in rad (dive under braking, squat under acceleration)
-  roll?: number;             // chassis roll angle in rad (body roll during cornering)
-  suspensionCompression?: [number, number, number, number]; // FL, FR, RL, RR compression fraction (0 to 1)
+  pitch?: number;            // chassis pitch angle in rad
+  roll?: number;             // chassis roll angle in rad
+  suspensionCompression?: [number, number, number, number]; // FL, FR, RL, RR compression fraction
   wheelSlip?: [number, number, number, number]; // FL, FR, RL, RR normalized slip magnitude
+  // Networking Sequence Tracking & Respawn
+  lastProcessedSequenceNumber?: number;
+  lastRespawnTimestamp?: number;
 }
 
 export interface PlayerSnapshot {
@@ -202,7 +206,7 @@ export type ClientMessage =
   | { type: 'SELECT_TRACK'; payload: { trackId: string } }
   | { type: 'SET_LAPS'; payload: { lapCount: number } }
   | { type: 'START_RACE' }
-  | { type: 'INPUT_UPDATE'; payload: { input: PlayerInput; timestamp: number } }
+  | { type: 'INPUT_UPDATE'; payload: { input: PlayerInput; sequenceNumber?: number; timestamp: number } }
   | { type: 'USE_POWERUP' }
   | { type: 'REQUEST_RESPAWN' }
   | { type: 'REMATCH' }

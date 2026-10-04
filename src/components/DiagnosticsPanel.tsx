@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Player, RoomInfo } from '../types/game';
 import { net } from '../game/network';
+import { ClientPredictionEngine } from '../game/prediction';
 import { Activity, X, Wifi, Cpu, Layers } from 'lucide-react';
 
 interface DiagnosticsPanelProps {
   room: RoomInfo | null;
   localPlayer: Player | null;
   fps: number;
+  predictionEngine?: ClientPredictionEngine | null;
 }
 
-export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ room, localPlayer, fps }) => {
+export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ room, localPlayer, fps, predictionEngine }) => {
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
@@ -42,7 +44,7 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ room, localP
   const rot = localPlayer ? ((localPlayer.state.rotationY * 180) / Math.PI).toFixed(1) : '0.0';
 
   return (
-    <div className="fixed top-14 left-4 z-50 w-72 glass-panel-glow p-3.5 rounded-xl border border-cyan-400/40 text-xs font-mono-race shadow-2xl animate-fadeIn">
+    <div className="fixed top-14 left-4 z-50 w-80 glass-panel-glow p-3.5 rounded-xl border border-cyan-400/40 text-xs font-mono-race shadow-2xl animate-fadeIn max-h-[85vh] overflow-y-auto">
       <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2">
         <span className="flex items-center gap-1.5 text-cyan-400 font-bold tracking-wider">
           <Activity className="w-3.5 h-3.5" /> SYSTEM DIAGNOSTICS
@@ -86,18 +88,49 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ room, localP
         </div>
 
         <div className="flex justify-between">
-          <span className="text-gray-400">ROOM STATE:</span>
-          <span className="text-white">{room?.state || 'IDLE'}</span>
-        </div>
-
-        <div className="flex justify-between">
           <span className="text-gray-400">ACTIVE RACERS:</span>
           <span className="text-cyan-300 font-bold">{room?.players.length || 0} / 15</span>
         </div>
 
+        {predictionEngine && (
+          <>
+            <div className="border-t border-white/10 pt-1.5 mt-1.5 text-[11px] text-cyan-300 font-bold">
+              CLIENT PREDICTION & RECONCILIATION
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">PREDICTION MODE:</span>
+              <span className={predictionEngine.isRespawning ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
+                {predictionEngine.isRespawning ? 'RESPAWNING' : 'ACTIVE PREDICTION'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">LOCAL INPUT SEQ:</span>
+              <span className="text-white font-bold">#{predictionEngine.sequenceNumber}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">ACKNOWLEDGED SEQ:</span>
+              <span className="text-cyan-400 font-bold">#{predictionEngine.lastAckSequenceNumber}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">UNACKNOWLEDGED QUEUE:</span>
+              <span className="text-white font-bold">{predictionEngine.pendingInputs.length} inputs</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">RECONCILIATION COUNT:</span>
+              <span className="text-purple-400 font-bold">{predictionEngine.reconciliationCount}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">CORRECTION MAGNITUDE:</span>
+              <span className={predictionEngine.lastCorrectionMagnitude > 0.5 ? 'text-amber-400 font-bold' : 'text-emerald-400'}>
+                {predictionEngine.lastCorrectionMagnitude.toFixed(3)} m
+              </span>
+            </div>
+          </>
+        )}
+
         {localPlayer && (
           <>
-            <div className="border-t border-white/10 pt-1.5 mt-1.5 text-[11px] text-gray-400">
+            <div className="border-t border-white/10 pt-1.5 mt-1.5 text-[11px] text-gray-400 font-bold">
               LOCAL VEHICLE TELEMETRY
             </div>
 
@@ -134,20 +167,6 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({ room, localP
               <span className="text-gray-400">TRANSMISSION:</span>
               <span className="text-white font-bold">
                 GEAR {localPlayer.state.currentGear} // {localPlayer.state.engineRpm} RPM
-              </span>
-            </div>
-
-            <div className="flex justify-between">
-              <span className="text-gray-400">ACTIVE POWERUP:</span>
-              <span className="text-pink-400 font-bold">
-                {localPlayer.state.activePowerUp || 'NONE'}
-              </span>
-            </div>
-
-            <div className="flex justify-between">
-              <span className="text-gray-400">OFF-TRACK:</span>
-              <span className={localPlayer.state.isOffTrack ? 'text-rose-400' : 'text-emerald-400'}>
-                {localPlayer.state.isOffTrack ? 'TRUE' : 'FALSE'}
               </span>
             </div>
           </>
